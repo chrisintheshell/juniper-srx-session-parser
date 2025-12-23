@@ -408,6 +408,250 @@ def display_top_conversations(sessions, limit=10):
         gb = bytes_sent / (1024**3)
         print(f"{src_ip:40s} {dst_ip:40s} {bytes_sent:15,d} {gb:10.2f}")
 
+def analyze_srx_sessions_extensive(input_file, output_file, write_csv=True):
+    """
+    Analyze Juniper SRX extensive session table output and convert to CSV format.
+    
+    Parses the extensive output format from 'show security flow session extensive'.
+    Supports both IPv4 and IPv6 addresses (including compressed IPv6 formats).
+    
+    Args:
+        input_file: Path to the text file containing SRX extensive session output
+        output_file: Path to the output CSV file
+        write_csv: Whether to write the CSV file (default: True)
+    
+    Returns:
+        List of analyzed session dictionaries
+    """
+    
+    sessions = []
+    current_session = {}
+    current_flow = None  # 'in' or 'out'
+    
+    with open(input_file, 'r') as f:
+        lines = f.readlines()
+    
+    for line in lines:
+        line = line.strip()
+        
+        # Skip empty lines and header lines
+        if not line or line.startswith('node0:') or line.startswith('---'):
+            continue
+        
+        # Match Session ID line (extensive format)
+        # Session ID: 4294967448, Status: Normal, State: Active
+        session_match = re.match(r'Session ID: (\d+),\s+Status: (\w+),\s+State: (\w+)', line)
+        if session_match:
+            # Save previous session if it exists
+            if current_session:
+                sessions.append(current_session)
+            
+            current_session = {
+                'session_id': session_match.group(1),
+                'status': session_match.group(2),
+                'state': session_match.group(3),
+                'service_name': ''
+            }
+            current_flow = None
+            continue
+        
+        # Match Flags line
+        flags_match = re.match(r'Flags: (.+)', line)
+        if flags_match and current_session:
+            current_session['flags'] = flags_match.group(1)
+            continue
+        
+        # Match Policy name line
+        policy_match = re.match(r'Policy name: (.+?)/(\d+)', line)
+        if policy_match and current_session:
+            current_session['policy_name'] = policy_match.group(1)
+            current_session['policy_id'] = policy_match.group(2)
+            continue
+        
+        # Match Source NAT pool and Application line
+        nat_app_match = re.match(r'Source NAT pool: ([^,]+)(?:,\s+Application: (.+))?', line)
+        if nat_app_match and current_session:
+            current_session['source_nat_pool'] = nat_app_match.group(1)
+            if nat_app_match.group(2):
+                current_session['application'] = nat_app_match.group(2)
+            continue
+        
+        # Match Dynamic application line
+        dyn_app_match = re.match(r'Dynamic application: (.+?)(?:,|$)', line)
+        if dyn_app_match and current_session:
+            current_session['dynamic_application'] = dyn_app_match.group(1).strip()
+            continue
+        
+        # Match Encryption line
+        enc_match = re.match(r'Encryption:\s+(.+)', line)
+        if enc_match and current_session:
+            current_session['encryption'] = enc_match.group(1).strip()
+            continue
+        
+        # Match Url-category line
+        url_match = re.match(r'Url-category:\s+(.+)', line)
+        if url_match and current_session:
+            current_session['url_category'] = url_match.group(1).strip()
+            continue
+        
+        # Match Application traffic control rule-set line
+        atc_match = re.match(r'Application traffic control rule-set: ([^,]+),\s+Rule: (.+)', line)
+        if atc_match and current_session:
+            current_session['atc_rule_set'] = atc_match.group(1)
+            current_session['atc_rule'] = atc_match.group(2)
+            continue
+        
+        # Match Maximum timeout, Current timeout line
+        timeout_match = re.match(r'Maximum timeout: (\d+),\s+Current timeout: (\d+)', line)
+        if timeout_match and current_session:
+            current_session['max_timeout'] = timeout_match.group(1)
+            current_session['current_timeout'] = timeout_match.group(2)
+            continue
+        
+        # Match Session State line
+        state_match = re.match(r'Session State: (\w+)', line)
+        if state_match and current_session:
+            current_session['session_state'] = state_match.group(1)
+            continue
+        
+        # Match Start time, Duration line
+        time_match = re.match(r'Start time: (\d+),\s+Duration: (\d+)', line)
+        if time_match and current_session:
+            current_session['start_time'] = time_match.group(1)
+            current_session['duration'] = time_match.group(2)
+            continue
+        
+        # Match Client/ALG info line
+        client_match = re.match(r'Client: (.+)', line)
+        if client_match and current_session:
+            current_session['client_info'] = client_match.group(1)
+            continue
+        
+        # Match In (ingress) flow start line
+        # In: 10.8.77.18/56591 --> 172.16.6.1/53;udp,
+        in_match = re.match(r'In:\s+([0-9a-fA-F.:]+)/(\d+)\s+-->\s+([0-9a-fA-F.:]+)/(\d+);(\w+)', line)
+        if in_match and current_session:
+            in_src_ip = in_match.group(1)
+            in_dst_ip = in_match.group(3)
+            
+            if is_valid_ip_address(in_src_ip) and is_valid_ip_address(in_dst_ip):
+                current_session['in_src_ip'] = in_src_ip
+                current_session['in_src_port'] = in_match.group(2)
+                current_session['in_dst_ip'] = in_dst_ip
+                current_session['in_dst_port'] = in_match.group(4)
+                current_session['protocol'] = in_match.group(5)
+                current_session['service_name'] = get_service_name(
+                    in_match.group(5), in_match.group(4))
+                current_flow = 'in'
+            continue
+        
+        # Match Out (egress) flow start line
+        out_match = re.match(r'Out:\s+([0-9a-fA-F.:]+)/(\d+)\s+-->\s+([0-9a-fA-F.:]+)/(\d+);(\w+)', line)
+        if out_match and current_session:
+            out_src_ip = out_match.group(1)
+            out_dst_ip = out_match.group(3)
+            
+            if is_valid_ip_address(out_src_ip) and is_valid_ip_address(out_dst_ip):
+                current_session['out_src_ip'] = out_src_ip
+                current_session['out_src_port'] = out_match.group(2)
+                current_session['out_dst_ip'] = out_dst_ip
+                current_session['out_dst_port'] = out_match.group(4)
+                current_flow = 'out'
+            continue
+        
+        # Match Conn Tag, Interface line (for current flow)
+        conn_match = re.match(r'Conn Tag: ([^,]+),\s+Interface: (.+?)(?:,|$)', line)
+        if conn_match and current_session and current_flow:
+            prefix = current_flow
+            current_session[f'{prefix}_conn_tag'] = conn_match.group(1)
+            current_session[f'{prefix}_interface'] = conn_match.group(2).strip()
+            continue
+        
+        # Match Session token, Flag line
+        token_match = re.match(r'Session token: ([^,]+),\s+Flag: (.+?)(?:,|$)', line)
+        if token_match and current_session and current_flow:
+            prefix = current_flow
+            current_session[f'{prefix}_session_token'] = token_match.group(1)
+            current_session[f'{prefix}_flag'] = token_match.group(2).strip()
+            continue
+        
+        # Match Route, Gateway, Tunnel ID, Tunnel type line
+        route_match = re.match(r'Route: ([^,]+),\s+Gateway: ([^,]+),\s+Tunnel ID: ([^,]+),\s+Tunnel type: (.+)', line)
+        if route_match and current_session and current_flow:
+            prefix = current_flow
+            current_session[f'{prefix}_route'] = route_match.group(1)
+            current_session[f'{prefix}_gateway'] = route_match.group(2)
+            current_session[f'{prefix}_tunnel_id'] = route_match.group(3)
+            current_session[f'{prefix}_tunnel_type'] = route_match.group(4)
+            continue
+        
+        # Match Port sequence, FIN sequence line
+        seq_match = re.match(r'Port sequence: ([^,]+),\s+FIN sequence: ([^,]+)', line)
+        if seq_match and current_session and current_flow:
+            prefix = current_flow
+            current_session[f'{prefix}_port_seq'] = seq_match.group(1)
+            current_session[f'{prefix}_fin_seq'] = seq_match.group(2).strip()
+            continue
+        
+        # Match FIN state line
+        fin_match = re.match(r'FIN state: (.+?)(?:,|$)', line)
+        if fin_match and current_session and current_flow:
+            prefix = current_flow
+            current_session[f'{prefix}_fin_state'] = fin_match.group(1).strip()
+            continue
+        
+        # Match Pkts, Bytes line
+        pkts_match = re.match(r'Pkts: (\d+),\s+Bytes: (\d+)', line)
+        if pkts_match and current_session and current_flow:
+            prefix = current_flow
+            current_session[f'{prefix}_pkts'] = pkts_match.group(1)
+            current_session[f'{prefix}_bytes'] = pkts_match.group(2)
+            continue
+    
+    # Don't forget the last session
+    if current_session:
+        sessions.append(current_session)
+    
+    # Write to CSV if requested
+    if write_csv and sessions:
+        fieldnames = [
+            'session_id', 'status', 'state', 'flags',
+            'policy_name', 'policy_id', 'source_nat_pool', 'application',
+            'dynamic_application', 'encryption', 'url_category',
+            'atc_rule_set', 'atc_rule',
+            'max_timeout', 'current_timeout', 'session_state',
+            'start_time', 'duration', 'client_info',
+            'protocol', 'service_name',
+            'in_src_ip', 'in_src_port', 'in_dst_ip', 'in_dst_port',
+            'in_conn_tag', 'in_interface', 'in_session_token', 'in_flag',
+            'in_route', 'in_gateway', 'in_tunnel_id', 'in_tunnel_type',
+            'in_port_seq', 'in_fin_seq', 'in_fin_state', 'in_pkts', 'in_bytes',
+            'out_src_ip', 'out_src_port', 'out_dst_ip', 'out_dst_port',
+            'out_conn_tag', 'out_interface', 'out_session_token', 'out_flag',
+            'out_route', 'out_gateway', 'out_tunnel_id', 'out_tunnel_type',
+            'out_port_seq', 'out_fin_seq', 'out_fin_state', 'out_pkts', 'out_bytes'
+        ]
+        
+        with open(output_file, 'w', newline='') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            for session in sessions:
+                # Ensure all fields exist
+                for field in fieldnames:
+                    if field not in session:
+                        session[field] = ''
+                writer.writerow(session)
+        
+        print(f"Successfully parsed {len(sessions)} sessions (extensive format)")
+        print(f"CSV file created: {output_file}")
+    elif sessions:
+        print(f"Successfully parsed {len(sessions)} sessions (extensive format)")
+    else:
+        print("No sessions found in the input file")
+    
+    return sessions
+
 # Usage example
 if __name__ == "__main__":
     # Load service definitions from PKL files
@@ -416,6 +660,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Parse Juniper SRX session tables')
     parser.add_argument('input_file', help='SRX session output file')
     parser.add_argument('output_file', nargs='?', help='Output CSV file (optional)')
+    parser.add_argument('-E', '--extensive', action='store_true',
+                        help='Parse extensive format output (show security flow session extensive)')
     parser.add_argument('-T', '--top-talkers', action='store_true', 
                         help='Display top talkers by bandwidth')
     parser.add_argument('-C', '--conversations', action='store_true', 
@@ -446,7 +692,11 @@ if __name__ == "__main__":
         print(f"Output file: {output_file}")
         print("-" * 50)
     
-    sessions = analyze_srx_sessions(args.input_file, output_file, write_csv=write_csv)
+    # Choose parser based on format
+    if args.extensive:
+        sessions = analyze_srx_sessions_extensive(args.input_file, output_file, write_csv=write_csv)
+    else:
+        sessions = analyze_srx_sessions(args.input_file, output_file, write_csv=write_csv)
     
     # Display top talkers if requested
     if args.top_talkers:

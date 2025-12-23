@@ -17,6 +17,7 @@ Analyze a Juniper SRX session table dump with optional bandwidth analysis.
 - `output_file` - Path to the output CSV file (optional, auto-generated if not provided)
 
 **Options:**
+- `-E, --extensive` - Parse extensive format output (`show security flow session extensive`)
 - `-T, --top-talkers` - Display top talkers by bandwidth
 - `-C, --conversations` - Display top conversations (source to destination)
 - `-n, --limit N` - Number of top talkers/conversations to display (default: 10, use with `-T` or `-C`)
@@ -27,12 +28,22 @@ Analyze a Juniper SRX session table dump with optional bandwidth analysis.
 - **With `-C` only**: Displays top conversations to stdout, no CSV created
 - **With `-T` and/or `-C` and explicit output file**: Displays analysis AND writes CSV
 
-**CSV Output Fields:**
+**CSV Output Fields (Standard Format):**
 - Session metadata: `session_id`, `policy_name`, `policy_id`, `state`, `timeout`
 - Protocol info: `protocol`, `service_name` (IANA standard service names, e.g., https, ssh, dns)
 - Ingress: `in_src_ip`, `in_src_port`, `in_dst_ip`, `in_dst_port`, `in_interface`, `in_pkts`, `in_bytes`
 - Egress: `out_src_ip`, `out_src_port`, `out_dst_ip`, `out_dst_port`, `out_interface`, `out_pkts`, `out_bytes`
 - Other: `resource_info`
+
+**CSV Output Fields (Extensive Format with `-E`):**
+- Session metadata: `session_id`, `status`, `state`, `flags`, `policy_name`, `policy_id`
+- NAT/App info: `source_nat_pool`, `application`, `dynamic_application`, `encryption`, `url_category`
+- Traffic control: `atc_rule_set`, `atc_rule`
+- Timing: `max_timeout`, `current_timeout`, `session_state`, `start_time`, `duration`
+- Client info: `client_info` (ALG information)
+- Protocol info: `protocol`, `service_name`
+- Ingress flow: `in_src_ip`, `in_src_port`, `in_dst_ip`, `in_dst_port`, `in_conn_tag`, `in_interface`, `in_session_token`, `in_flag`, `in_route`, `in_gateway`, `in_tunnel_id`, `in_tunnel_type`, `in_port_seq`, `in_fin_seq`, `in_fin_state`, `in_pkts`, `in_bytes`
+- Egress flow: `out_src_ip`, `out_src_port`, `out_dst_ip`, `out_dst_port`, `out_conn_tag`, `out_interface`, `out_session_token`, `out_flag`, `out_route`, `out_gateway`, `out_tunnel_id`, `out_tunnel_type`, `out_port_seq`, `out_fin_seq`, `out_fin_state`, `out_pkts`, `out_bytes`
 
 **Examples:**
 ```bash
@@ -60,6 +71,13 @@ python srx_session_analyzer.py vpn-sessions.txt output.csv -T -n 15
 
 # Show talkers and conversations AND write CSV
 python srx_session_analyzer.py vpn-sessions.txt output.csv -T -C -n 20
+
+# Parse extensive format output
+python srx_session_analyzer.py sessions-extensive.txt -E
+python srx_session_analyzer.py sessions-extensive.txt output.csv -E
+
+# Parse extensive format with top talkers
+python srx_session_analyzer.py sessions-extensive.txt -E -T -n 15
 ```
 
 ## Code Structure
@@ -69,6 +87,12 @@ python srx_session_analyzer.py vpn-sessions.txt output.csv -T -C -n 20
   - Builds session dictionaries with ingress/egress flow information
   - Writes structured CSV output with service name mapping (optional)
   - Returns analyzed sessions list for further analysis
+
+- `analyze_srx_sessions_extensive(input_file, output_file, write_csv=True)` - Extensive format parser
+  - Parses output from `show security flow session extensive`
+  - Captures all extended fields: NAT pools, applications, tunnels, routing, flags
+  - Tracks flow state for ingress/egress with session tokens and FIN states
+  - Returns analyzed sessions list compatible with top talkers/conversations analysis
 
 - `get_top_talkers(sessions, limit=10)` - Bandwidth aggregation function
   - Aggregates egress bytes by source IP (data sent) and destination IP (data received)
