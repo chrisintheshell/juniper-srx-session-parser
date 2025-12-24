@@ -21,6 +21,9 @@ Analyze a Juniper SRX session table dump with optional bandwidth analysis.
 - `-T, --top-talkers` - Display top talkers by bandwidth
 - `-C, --conversations` - Display top conversations (source to destination)
 - `-n, --limit N` - Number of top talkers/conversations to display (default: 10, use with `-T` or `-C`)
+- `-P, --prefix PREFIX` - Filter sessions by IP prefix in CIDR notation (e.g., `10.150.73.0/24`)
+- `-s, --source` - With `-P`, only match source IPs (requires `-P`)
+- `-d, --destination` - With `-P`, only match destination IPs (requires `-P`)
 
 **Output Modes:**
 - **Default (no options)**: Creates a CSV file with session data
@@ -78,6 +81,18 @@ python srx_session_analyzer.py sessions-extensive.txt output.csv -E
 
 # Parse extensive format with top talkers
 python srx_session_analyzer.py sessions-extensive.txt -E -T -n 15
+
+# Filter by IP prefix (matches source OR destination)
+python srx_session_analyzer.py vpn-sessions.txt -P 10.150.73.0/24
+
+# Filter by prefix, only match source IPs
+python srx_session_analyzer.py vpn-sessions.txt -P 10.150.73.0/24 -s
+
+# Filter by prefix, only match destination IPs
+python srx_session_analyzer.py vpn-sessions.txt -P 10.150.73.0/24 -d
+
+# Combine prefix filter with top talkers
+python srx_session_analyzer.py vpn-sessions.txt -P 10.150.0.0/16 -T -n 10
 ```
 
 ## Code Structure

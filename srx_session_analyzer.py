@@ -5,6 +5,7 @@ import os
 import json
 import subprocess
 import argparse
+import ipaddress
 from datetime import datetime
 
 # Service mappings loaded from PKL files via pkl eval
@@ -145,6 +146,72 @@ def is_valid_ip_address(ip):
         return True
     
     return False
+
+def ip_in_prefix(ip_str, prefix_str):
+    """
+    Check if an IP address falls within a given prefix/network.
+    
+    Args:
+        ip_str: IP address string (e.g., '10.150.73.5')
+        prefix_str: Network prefix in CIDR notation (e.g., '10.150.73.0/24')
+    
+    Returns:
+        True if the IP is within the prefix, False otherwise
+    """
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        network = ipaddress.ip_network(prefix_str, strict=False)
+        return ip in network
+    except ValueError:
+        return False
+
+def filter_sessions_by_prefix(sessions, prefix, source_only=False, dest_only=False):
+    """
+    Filter sessions by IP prefix.
+    
+    Args:
+        sessions: List of session dictionaries
+        prefix: Network prefix in CIDR notation (e.g., '10.150.73.0/24')
+        source_only: If True, only match source IPs
+        dest_only: If True, only match destination IPs
+        
+    If both source_only and dest_only are False (or both True), 
+    matches sessions where either source OR destination is in the prefix.
+    
+    Returns:
+        Filtered list of sessions
+    """
+    filtered = []
+    
+    # If both are False or both are True, match either source or destination
+    match_either = (not source_only and not dest_only) or (source_only and dest_only)
+    
+    for session in sessions:
+        # Check ingress flow IPs
+        in_src = session.get('in_src_ip', '')
+        in_dst = session.get('in_dst_ip', '')
+        # Check egress flow IPs
+        out_src = session.get('out_src_ip', '')
+        out_dst = session.get('out_dst_ip', '')
+        
+        # Collect all source and destination IPs
+        src_ips = [ip for ip in [in_src, out_src] if ip]
+        dst_ips = [ip for ip in [in_dst, out_dst] if ip]
+        
+        src_match = any(ip_in_prefix(ip, prefix) for ip in src_ips)
+        dst_match = any(ip_in_prefix(ip, prefix) for ip in dst_ips)
+        
+        if match_either:
+            if src_match or dst_match:
+                filtered.append(session)
+        elif source_only:
+            if src_match:
+                filtered.append(session)
+        elif dest_only:
+            if dst_match:
+                filtered.append(session)
+    
+    return filtered
 
 def analyze_srx_sessions(input_file, output_file, write_csv=True):
     """
@@ -315,6 +382,59 @@ def analyze_srx_sessions(input_file, output_file, write_csv=True):
         print("No sessions found in the input file")
     
     return sessions
+
+def write_sessions_csv(sessions, output_file, extensive=False):
+    """
+    Write sessions to a CSV file.
+    
+    Args:
+        sessions: List of session dictionaries
+        output_file: Path to the output CSV file
+        extensive: If True, use extensive format fieldnames
+    """
+    if not sessions:
+        print("No sessions to write")
+        return
+    
+    if extensive:
+        fieldnames = [
+            'session_id', 'status', 'state', 'flags',
+            'policy_name', 'policy_id', 'source_nat_pool', 'application',
+            'dynamic_application', 'encryption', 'url_category',
+            'atc_rule_set', 'atc_rule',
+            'max_timeout', 'current_timeout', 'session_state',
+            'start_time', 'duration', 'client_info',
+            'protocol', 'service_name',
+            'in_src_ip', 'in_src_port', 'in_dst_ip', 'in_dst_port',
+            'in_conn_tag', 'in_interface', 'in_session_token', 'in_flag',
+            'in_route', 'in_gateway', 'in_tunnel_id', 'in_tunnel_type',
+            'in_port_seq', 'in_fin_seq', 'in_fin_state', 'in_pkts', 'in_bytes',
+            'out_src_ip', 'out_src_port', 'out_dst_ip', 'out_dst_port',
+            'out_conn_tag', 'out_interface', 'out_session_token', 'out_flag',
+            'out_route', 'out_gateway', 'out_tunnel_id', 'out_tunnel_type',
+            'out_port_seq', 'out_fin_seq', 'out_fin_state', 'out_pkts', 'out_bytes'
+        ]
+    else:
+        fieldnames = [
+            'session_id', 'policy_name', 'policy_id', 'state', 'timeout',
+            'protocol', 'service_name',
+            'in_src_ip', 'in_src_port', 'in_dst_ip', 'in_dst_port',
+            'in_interface', 'in_pkts', 'in_bytes',
+            'out_src_ip', 'out_src_port', 'out_dst_ip', 'out_dst_port',
+            'out_interface', 'out_pkts', 'out_bytes', 'resource_info'
+        ]
+    
+    with open(output_file, 'w', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        
+        for session in sessions:
+            row = {}
+            for field in fieldnames:
+                row[field] = session.get(field, '')
+            writer.writerow(row)
+    
+    print(f"CSV file created: {output_file}")
 
 def get_top_talkers(sessions, limit=10):
     """
@@ -668,8 +788,18 @@ if __name__ == "__main__":
                         help='Display top conversations (source to destination)')
     parser.add_argument('-n', '--limit', type=int, default=10, 
                         metavar='N', help='Number of top talkers/conversations to display (default: 10)')
+    parser.add_argument('-P', '--prefix', metavar='PREFIX',
+                        help='Filter sessions by IP prefix (CIDR notation, e.g., 10.150.73.0/24)')
+    parser.add_argument('-s', '--source', action='store_true',
+                        help='With -P, only match source IPs')
+    parser.add_argument('-d', '--destination', action='store_true',
+                        help='With -P, only match destination IPs')
     
     args = parser.parse_args()
+    
+    # Validate -s and -d require -P
+    if (args.source or args.destination) and not args.prefix:
+        parser.error('-s and -d options require -P/--prefix')
     
     # Check if input file exists
     if not os.path.exists(args.input_file):
@@ -692,11 +822,28 @@ if __name__ == "__main__":
         print(f"Output file: {output_file}")
         print("-" * 50)
     
-    # Choose parser based on format
+    # Parse sessions (without writing CSV - we'll write after filtering)
     if args.extensive:
-        sessions = analyze_srx_sessions_extensive(args.input_file, output_file, write_csv=write_csv)
+        sessions = analyze_srx_sessions_extensive(args.input_file, None, write_csv=False)
     else:
-        sessions = analyze_srx_sessions(args.input_file, output_file, write_csv=write_csv)
+        sessions = analyze_srx_sessions(args.input_file, None, write_csv=False)
+    
+    # Apply prefix filter if specified
+    if args.prefix:
+        original_count = len(sessions)
+        sessions = filter_sessions_by_prefix(
+            sessions, args.prefix, 
+            source_only=args.source, 
+            dest_only=args.destination
+        )
+        filter_type = "source" if args.source and not args.destination else \
+                      "destination" if args.destination and not args.source else \
+                      "source or destination"
+        print(f"Filtered by prefix {args.prefix} ({filter_type}): {len(sessions)} of {original_count} sessions")
+    
+    # Write CSV after filtering
+    if write_csv:
+        write_sessions_csv(sessions, output_file, extensive=args.extensive)
     
     # Display top talkers if requested
     if args.top_talkers:
