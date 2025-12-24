@@ -5,7 +5,9 @@ Analyze Juniper SRX session table dumps with optional top talkers and conversati
 ## Features
 
 - **Session Parsing**: Converts raw SRX session table output to structured CSV format
+- **Extensive Format Support**: Parse detailed output from `show security flow session extensive`
 - **IPv4 & IPv6 Support**: Handles both IPv4 and compressed IPv6 address formats
+- **IP Prefix Filtering**: Filter sessions by source/destination IP prefix (CIDR notation)
 - **Service Name Mapping**: Automatically maps protocol + port to IANA standard and Juniper application names
 - **Top Talkers Analysis**: Identify top bandwidth consumers by source and destination IP
 - **Conversation Analysis**: Display top communication flows (source to destination pairs)
@@ -67,6 +69,32 @@ python srx_session_analyzer.py vpn-sessions.txt -T -C
 python srx_session_analyzer.py vpn-sessions.txt output.csv -T -C -n 15
 ```
 
+### Extensive Format Parsing
+
+```bash
+# Parse extensive format output from SRX
+python srx_session_analyzer.py sessions-extensive.txt -E
+
+# Extensive format with top talkers
+python srx_session_analyzer.py sessions-extensive.txt -E -T -n 15
+```
+
+### IP Prefix Filtering
+
+```bash
+# Filter by IP prefix (matches source OR destination)
+python srx_session_analyzer.py vpn-sessions.txt -P 10.150.73.0/24
+
+# Filter by prefix, only match source IPs
+python srx_session_analyzer.py vpn-sessions.txt -P 10.150.73.0/24 -s
+
+# Filter by prefix, only match destination IPs
+python srx_session_analyzer.py vpn-sessions.txt -P 10.150.73.0/24 -d
+
+# Combine prefix filter with top talkers
+python srx_session_analyzer.py vpn-sessions.txt -P 10.150.0.0/16 -T -n 10
+```
+
 ## Command-Line Options
 
 ```
@@ -75,9 +103,13 @@ positional arguments:
   output_file                   Output CSV file (optional)
 
 optional arguments:
+  -E, --extensive               Parse extensive format output
   -T, --top-talkers             Display top talkers by bandwidth
   -C, --conversations           Display top conversations (source → destination)
   -n, --limit N                 Number of top items to display (default: 10)
+  -P, --prefix PREFIX           Filter by IP prefix (CIDR notation)
+  -s, --source                  With -P, only match source IPs
+  -d, --destination             With -P, only match destination IPs
   -h, --help                    Show help message
 ```
 
@@ -184,7 +216,7 @@ Display top 50 communication flows for forensic investigation.
 ## Project Structure
 
 ```
-juniper-srx-session-parser/
+juniper-srx-session-analyzer/
 ├── README.md
 ├── AGENTS.md
 ├── srx_session_analyzer.py
