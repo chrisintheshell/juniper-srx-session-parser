@@ -19,11 +19,11 @@ Analyze a Juniper SRX session table dump with optional bandwidth analysis.
 **Options:**
 - `-E, --extensive` - Parse extensive format output (`show security flow session extensive`)
 - `-T, --top-talkers` - Display top talkers by bandwidth
-- `-C, --conversations` - Display top conversations (source to destination)
+- `-C, --conversations` - Display top conversations (client to server)
 - `-n, --limit N` - Number of top talkers/conversations to display (default: 10, use with `-T` or `-C`)
 - `-P, --prefix PREFIX` - Filter sessions by IP prefix in CIDR notation (e.g., `10.150.73.0/24`)
-- `-s, --source` - With `-P`, only match source IPs (requires `-P`)
-- `-d, --destination` - With `-P`, only match destination IPs (requires `-P`)
+- `-s, --source` - With `-P`, only match client (source) IPs (requires `-P`)
+- `-d, --destination` - With `-P`, only match server (destination) IPs (requires `-P`)
 
 **Output Modes:**
 - **Default (no options)**: Creates a CSV file with session data
@@ -82,13 +82,13 @@ python srx_session_analyzer.py sessions-extensive.txt output.csv -E
 # Parse extensive format with top talkers
 python srx_session_analyzer.py sessions-extensive.txt -E -T -n 15
 
-# Filter by IP prefix (matches source OR destination)
+# Filter by IP prefix (matches client OR server IP)
 python srx_session_analyzer.py vpn-sessions.txt -P 10.150.73.0/24
 
-# Filter by prefix, only match source IPs
+# Filter by prefix, only match client IPs
 python srx_session_analyzer.py vpn-sessions.txt -P 10.150.73.0/24 -s
 
-# Filter by prefix, only match destination IPs
+# Filter by prefix, only match server IPs
 python srx_session_analyzer.py vpn-sessions.txt -P 10.150.73.0/24 -d
 
 # Combine prefix filter with top talkers
@@ -98,6 +98,7 @@ python srx_session_analyzer.py vpn-sessions.txt -P 10.150.0.0/16 -T -n 10
 ## Code Structure
 
 - `analyze_srx_sessions(input_file, output_file, write_csv=True)` - Main analysis function
+  - Parses output from `show security flow session`
   - Regex-based line-by-line parsing of SRX session table format (IPv4 and IPv6)
   - Builds session dictionaries with ingress/egress flow information
   - Writes structured CSV output with service name mapping (optional)
@@ -110,24 +111,30 @@ python srx_session_analyzer.py vpn-sessions.txt -P 10.150.0.0/16 -T -n 10
   - Returns analyzed sessions list compatible with top talkers/conversations analysis
 
 - `get_top_talkers(sessions, limit=10)` - Bandwidth aggregation function
-  - Aggregates egress bytes by source IP (data sent) and destination IP (data received)
+  - Uses ingress flow IPs to identify original client/server (pre-NAT)
+  - Aggregates total bytes (in_bytes + out_bytes) by client IP and server IP
   - Sorts and returns top N talkers for each direction
-  - Returns tuple of (src_talkers, dst_talkers) lists
+  - Returns tuple of (client_talkers, server_talkers) lists
 
 - `display_top_talkers(sessions, limit=10)` - Top talkers display function
   - Formats and displays top bandwidth users
   - Shows data in bytes and gigabytes for readability
-  - Displays both source and destination IP rankings
+  - Displays both client (connection initiators) and server (connection destinations) rankings
 
 - `get_top_conversations(sessions, limit=10)` - Conversation aggregation function
-  - Aggregates egress bytes by (source IP, destination IP) pairs
+  - Uses ingress flow IPs to identify original client/server (pre-NAT)
+  - Aggregates total bytes by (client IP, server IP, dst port, service) tuples
   - Sorts and returns top N conversations by bandwidth
-  - Returns list of ((src_ip, dst_ip), bytes) tuples
+  - Returns list of ((client_ip, server_ip, dst_port, service_name), bytes) tuples
 
 - `display_top_conversations(sessions, limit=10)` - Top conversations display function
   - Formats and displays top bandwidth conversations
-  - Shows source → destination pairs with bytes and gigabytes
+  - Shows client → server pairs with destination port, service, bytes and gigabytes
   - Identifies the actual communication flows between IPs
+
+- `filter_sessions_by_prefix(sessions, prefix, source_only, dest_only)` - Prefix filter function
+  - Uses ingress flow IPs (pre-NAT) for filtering
+  - Matches client IP with `-s`, server IP with `-d`, or either by default
 
 - `get_service_name(protocol, dest_port)` - Protocol/port to service name lookup
   - Maps protocol + destination port to IANA standard service names

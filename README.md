@@ -9,8 +9,8 @@ Analyze Juniper SRX session table dumps with optional top talkers and conversati
 - **IPv4 & IPv6 Support**: Handles both IPv4 and compressed IPv6 address formats
 - **IP Prefix Filtering**: Filter sessions by source/destination IP prefix (CIDR notation)
 - **Service Name Mapping**: Automatically maps protocol + port to IANA standard and Juniper application names
-- **Top Talkers Analysis**: Identify top bandwidth consumers by source and destination IP
-- **Conversation Analysis**: Display top communication flows (source to destination pairs)
+- **Top Talkers Analysis**: Identify top bandwidth consumers by client and server IP
+- **Conversation Analysis**: Display top communication flows (client to server pairs with port and service)
 - **Flexible Output**: Export to CSV, analyze via stdout, or both
 
 ## Requirements
@@ -82,13 +82,13 @@ python srx_session_analyzer.py sessions-extensive.txt -E -T -n 15
 ### IP Prefix Filtering
 
 ```bash
-# Filter by IP prefix (matches source OR destination)
+# Filter by IP prefix (matches client OR server IP)
 python srx_session_analyzer.py vpn-sessions.txt -P 10.150.73.0/24
 
-# Filter by prefix, only match source IPs
+# Filter by prefix, only match client IPs
 python srx_session_analyzer.py vpn-sessions.txt -P 10.150.73.0/24 -s
 
-# Filter by prefix, only match destination IPs
+# Filter by prefix, only match server IPs
 python srx_session_analyzer.py vpn-sessions.txt -P 10.150.73.0/24 -d
 
 # Combine prefix filter with top talkers
@@ -105,11 +105,11 @@ positional arguments:
 optional arguments:
   -E, --extensive               Parse extensive format output
   -T, --top-talkers             Display top talkers by bandwidth
-  -C, --conversations           Display top conversations (source → destination)
+  -C, --conversations           Display top conversations (client → server)
   -n, --limit N                 Number of top items to display (default: 10)
   -P, --prefix PREFIX           Filter by IP prefix (CIDR notation)
-  -s, --source                  With -P, only match source IPs
-  -d, --destination             With -P, only match destination IPs
+  -s, --source                  With -P, only match client (source) IPs
+  -d, --destination             With -P, only match server (destination) IPs
   -h, --help                    Show help message
 ```
 
@@ -133,23 +133,30 @@ The CSV output contains the following fields:
 
 ```
 ============================================================
-Top 10 Talkers - Source IPs (Data Sent)
+Top 10 Talkers - Client IPs (Connection Initiators)
 ============================================================
 10.1.2.100                               5000000000 bytes (4.66 GB)
 192.168.1.50                             3000000000 bytes (2.79 GB)
+...
+
+============================================================
+Top 10 Talkers - Server IPs (Connection Destinations)
+============================================================
+172.16.0.10                              5000000000 bytes (4.66 GB)
+8.8.8.8                                  3000000000 bytes (2.79 GB)
 ...
 ```
 
 ### Top Conversations Output
 
 ```
-============================================================
-Top 10 Conversations (Source → Destination)
-============================================================
-Source IP                       Destination IP                        Bytes          GB
----------------------------------------------
-10.1.2.100                      172.16.0.10                      5000000000      4.66
-192.168.1.50                    8.8.8.8                          3000000000      2.79
+================================================================================
+Top 10 Conversations (Client → Server)
+================================================================================
+Client IP                                Server IP                                Dst Port Service              Bytes         GB
+--------------------------------------------------------------------------------------------------------------------------------
+10.1.2.100                               172.16.0.10                              443      https           5000000000       4.66
+192.168.1.50                             8.8.8.8                                  53       domain          3000000000       2.79
 ...
 ```
 
@@ -158,7 +165,7 @@ Source IP                       Destination IP                        Bytes     
 The parser uses two service definition files:
 
 - **juniper_services.pkl**: Juniper SRX default applications (checked first for priority)
-- **iana_services.pkl**: IANA standard service names (fallback)
+- **iana_services.pkl**: Complete IANA registry with 11,615 entries (TCP, UDP, SCTP, DCCP services and protocol numbers)
 
 Service lookups follow this priority:
 1. Juniper application name (protocol + port match)
@@ -166,6 +173,8 @@ Service lookups follow this priority:
 3. Protocol name (fallback)
 
 Port ranges are supported (e.g., `5190-5193` for AOL).
+
+**Note**: Analysis functions (top talkers, conversations, prefix filtering) use ingress flow IPs which represent the original client and server before any NAT translation.
 
 ## Input Format
 

@@ -169,14 +169,17 @@ def filter_sessions_by_prefix(sessions, prefix, source_only=False, dest_only=Fal
     """
     Filter sessions by IP prefix.
     
+    Uses ingress flow IPs (in_src_ip, in_dst_ip) which represent the original
+    client and destination IPs before NAT translation.
+    
     Args:
         sessions: List of session dictionaries
         prefix: Network prefix in CIDR notation (e.g., '10.150.73.0/24')
-        source_only: If True, only match source IPs
-        dest_only: If True, only match destination IPs
+        source_only: If True, only match client (source) IPs
+        dest_only: If True, only match server (destination) IPs
         
     If both source_only and dest_only are False (or both True), 
-    matches sessions where either source OR destination is in the prefix.
+    matches sessions where either client OR server IP is in the prefix.
     
     Returns:
         Filtered list of sessions
@@ -187,28 +190,21 @@ def filter_sessions_by_prefix(sessions, prefix, source_only=False, dest_only=Fal
     match_either = (not source_only and not dest_only) or (source_only and dest_only)
     
     for session in sessions:
-        # Check ingress flow IPs
-        in_src = session.get('in_src_ip', '')
-        in_dst = session.get('in_dst_ip', '')
-        # Check egress flow IPs
-        out_src = session.get('out_src_ip', '')
-        out_dst = session.get('out_dst_ip', '')
+        # Use ingress flow IPs (original client → destination, pre-NAT)
+        client_ip = session.get('in_src_ip', '')
+        server_ip = session.get('in_dst_ip', '')
         
-        # Collect all source and destination IPs
-        src_ips = [ip for ip in [in_src, out_src] if ip]
-        dst_ips = [ip for ip in [in_dst, out_dst] if ip]
-        
-        src_match = any(ip_in_prefix(ip, prefix) for ip in src_ips)
-        dst_match = any(ip_in_prefix(ip, prefix) for ip in dst_ips)
+        client_match = client_ip and ip_in_prefix(client_ip, prefix)
+        server_match = server_ip and ip_in_prefix(server_ip, prefix)
         
         if match_either:
-            if src_match or dst_match:
+            if client_match or server_match:
                 filtered.append(session)
         elif source_only:
-            if src_match:
+            if client_match:
                 filtered.append(session)
         elif dest_only:
-            if dst_match:
+            if server_match:
                 filtered.append(session)
     
     return filtered
@@ -440,6 +436,10 @@ def get_top_talkers(sessions, limit=10):
     """
     Aggregate and rank bandwidth usage by source and destination IPs.
     
+    Uses ingress flow IPs (in_src_ip, in_dst_ip) to identify the original client
+    and destination, since egress IPs may be NAT'd. Sums both ingress and egress
+    bytes for total bandwidth per IP.
+    
     Args:
         sessions: List of session dictionaries
         limit: Number of top talkers to return
@@ -447,21 +447,23 @@ def get_top_talkers(sessions, limit=10):
     Returns:
         Tuple of (src_talkers, dst_talkers) - each a list of (ip, bytes) tuples
     """
-    src_bytes = {}  # source IPs
-    dst_bytes = {}  # destination IPs
+    src_bytes = {}  # source IPs (clients initiating connections)
+    dst_bytes = {}  # destination IPs (servers receiving connections)
     
     for session in sessions:
+        # Sum both directions for total session bandwidth
+        in_bytes = int(session.get('in_bytes', 0) or 0)
         out_bytes = int(session.get('out_bytes', 0) or 0)
+        total_bytes = in_bytes + out_bytes
         
-        # Aggregate by source IP (what they sent)
-        if session.get('out_src_ip'):
-            src_ip = session['out_src_ip']
-            src_bytes[src_ip] = src_bytes.get(src_ip, 0) + out_bytes
+        # Use ingress flow IPs (original client → destination, pre-NAT)
+        if session.get('in_src_ip'):
+            src_ip = session['in_src_ip']
+            src_bytes[src_ip] = src_bytes.get(src_ip, 0) + total_bytes
         
-        # Aggregate by destination IP (what they received)
-        if session.get('out_dst_ip'):
-            dst_ip = session['out_dst_ip']
-            dst_bytes[dst_ip] = dst_bytes.get(dst_ip, 0) + out_bytes
+        if session.get('in_dst_ip'):
+            dst_ip = session['in_dst_ip']
+            dst_bytes[dst_ip] = dst_bytes.get(dst_ip, 0) + total_bytes
     
     # Sort by bytes descending
     src_talkers = sorted(src_bytes.items(), key=lambda x: x[1], reverse=True)[:limit]
@@ -474,41 +476,50 @@ def display_top_talkers(sessions, limit=10):
     src_talkers, dst_talkers = get_top_talkers(sessions, limit)
     
     print(f"\n{'='*60}")
-    print(f"Top {limit} Talkers - Source IPs (Data Sent)")
+    print(f"Top {limit} Talkers - Client IPs (Connection Initiators)")
     print(f"{'='*60}")
-    for ip, bytes_sent in src_talkers:
-        gb = bytes_sent / (1024**3)
-        print(f"{ip:40s} {bytes_sent:15,d} bytes ({gb:.2f} GB)")
+    for ip, total_bytes in src_talkers:
+        gb = total_bytes / (1024**3)
+        print(f"{ip:40s} {total_bytes:15,d} bytes ({gb:.2f} GB)")
     
     print(f"\n{'='*60}")
-    print(f"Top {limit} Talkers - Destination IPs (Data Received)")
+    print(f"Top {limit} Talkers - Server IPs (Connection Destinations)")
     print(f"{'='*60}")
-    for ip, bytes_recv in dst_talkers:
-        gb = bytes_recv / (1024**3)
-        print(f"{ip:40s} {bytes_recv:15,d} bytes ({gb:.2f} GB)")
+    for ip, total_bytes in dst_talkers:
+        gb = total_bytes / (1024**3)
+        print(f"{ip:40s} {total_bytes:15,d} bytes ({gb:.2f} GB)")
 
 def get_top_conversations(sessions, limit=10):
     """
-    Aggregate and rank bandwidth usage by conversation (src_ip + dst_ip pairs).
+    Aggregate and rank bandwidth usage by conversation (src_ip + dst_ip + port + service).
+    
+    Uses ingress flow IPs (in_src_ip → in_dst_ip) to identify the original client
+    and destination, since egress IPs may be NAT'd. Sums both ingress and egress
+    bytes for total conversation bandwidth.
     
     Args:
         sessions: List of session dictionaries
         limit: Number of top conversations to return
     
     Returns:
-        List of ((src_ip, dst_ip), bytes) tuples sorted by bytes descending
+        List of ((src_ip, dst_ip, dst_port, service_name), bytes) tuples sorted by bytes descending
     """
     conversation_bytes = {}
     
     for session in sessions:
+        # Sum both directions for total conversation bandwidth
+        in_bytes = int(session.get('in_bytes', 0) or 0)
         out_bytes = int(session.get('out_bytes', 0) or 0)
+        total_bytes = in_bytes + out_bytes
         
-        # Aggregate by conversation pair (src to dst)
-        if session.get('out_src_ip') and session.get('out_dst_ip'):
-            src_ip = session['out_src_ip']
-            dst_ip = session['out_dst_ip']
-            key = (src_ip, dst_ip)
-            conversation_bytes[key] = conversation_bytes.get(key, 0) + out_bytes
+        # Use ingress flow IPs (original client → destination, pre-NAT)
+        if session.get('in_src_ip') and session.get('in_dst_ip'):
+            src_ip = session['in_src_ip']
+            dst_ip = session['in_dst_ip']
+            dst_port = session.get('in_dst_port', '') or ''
+            service_name = session.get('service_name', '') or 'unknown'
+            key = (src_ip, dst_ip, dst_port, service_name)
+            conversation_bytes[key] = conversation_bytes.get(key, 0) + total_bytes
     
     # Sort by bytes descending
     conversations = sorted(conversation_bytes.items(), key=lambda x: x[1], reverse=True)[:limit]
@@ -519,14 +530,14 @@ def display_top_conversations(sessions, limit=10):
     """Display top bandwidth conversations."""
     conversations = get_top_conversations(sessions, limit)
     
-    print(f"\n{'='*60}")
-    print(f"Top {limit} Conversations (Source → Destination)")
-    print(f"{'='*60}")
-    print(f"{'Source IP':40s} {'Destination IP':40s} {'Bytes':>15s} {'GB':>10s}")
-    print(f"{'-'*105}")
-    for (src_ip, dst_ip), bytes_sent in conversations:
-        gb = bytes_sent / (1024**3)
-        print(f"{src_ip:40s} {dst_ip:40s} {bytes_sent:15,d} {gb:10.2f}")
+    print(f"\n{'='*80}")
+    print(f"Top {limit} Conversations (Client → Server)")
+    print(f"{'='*80}")
+    print(f"{'Client IP':40s} {'Server IP':40s} {'Dst Port':8s} {'Service':20s} {'Bytes':>15s} {'GB':>10s}")
+    print(f"{'-'*136}")
+    for (src_ip, dst_ip, dst_port, service_name), total_bytes in conversations:
+        gb = total_bytes / (1024**3)
+        print(f"{src_ip:40s} {dst_ip:40s} {dst_port:8s} {service_name:20s} {total_bytes:15,d} {gb:10.2f}")
 
 def analyze_srx_sessions_extensive(input_file, output_file, write_csv=True):
     """
