@@ -10,6 +10,33 @@ This project contains a Juniper SRX session table analyzer that converts raw SRX
 python srx_session_analyzer.py <input_file> [output_file] [options]
 ```
 
+### Generate Service PKL Files
+```bash
+python generate_services.py {juniper,custom,iana} [options]
+```
+
+Generate or update service definition PKL files:
+- `juniper` - Generate juniper_services.pkl from Junos defaults config
+- `custom` - Generate custom_services.pkl from site applications config  
+- `iana` - Generate iana_services.pkl from IANA CSV registries (downloads automatically)
+
+**Examples:**
+```bash
+# Generate Juniper defaults (from: show configuration groups junos-defaults applications | save /var/tmp/junos-defaults-apps.txt)
+python generate_services.py juniper --input junos-defaults-apps.txt
+
+# Generate custom services (from: show configuration applications | save /var/tmp/site-apps.txt)
+python generate_services.py custom --input site-apps.txt
+
+# Generate IANA services (downloads CSV files)
+python generate_services.py iana
+
+# Force re-download IANA files
+python generate_services.py iana --force-download
+```
+
+---
+
 Analyze a Juniper SRX session table dump with optional bandwidth analysis.
 
 **Arguments:**

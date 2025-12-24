@@ -178,6 +178,37 @@ Port ranges are supported (e.g., `50000-50150` for svc-immix-lv-tcp).
 
 **Note**: Analysis functions (top talkers, conversations, prefix filtering) use ingress flow IPs which represent the original client and server before any NAT translation.
 
+### Updating Service Definitions
+
+Use `generate_services.py` to regenerate service PKL files:
+
+**Update Juniper Default Services:**
+```bash
+# On SRX firewall:
+show configuration groups junos-defaults applications | save /var/tmp/junos-defaults-apps.txt
+
+# Download file locally, then run:
+python generate_services.py juniper --input junos-defaults-apps.txt
+```
+
+**Update Custom Services:**
+```bash
+# On SRX firewall:
+show configuration applications | save /var/tmp/site-apps.txt
+
+# Download file locally, then run:
+python generate_services.py custom --input site-apps.txt
+```
+
+**Update IANA Services:**
+```bash
+# Downloads latest CSV files from IANA automatically
+python generate_services.py iana
+
+# Force re-download (ignore cache)
+python generate_services.py iana --force-download
+```
+
 ## Input Format
 
 The parser expects SRX session table output with this structure:
@@ -231,6 +262,7 @@ juniper-srx-session-analyzer/
 ├── README.md
 ├── AGENTS.md
 ├── srx_session_analyzer.py
+├── generate_services.py
 └── services/
     ├── juniper_services.pkl
     ├── custom_services.pkl
