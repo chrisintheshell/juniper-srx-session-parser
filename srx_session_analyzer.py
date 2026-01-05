@@ -381,10 +381,10 @@ def analyze_srx_sessions(input_file, output_file, write_csv=True):
                 current_session['service_name'] = get_service_name(protocol, in_dst_port)
                 
                 # Extract additional info from the rest of the line
-                if_match = re.search(r'If: ([\w.]+)', line)
+                if_match = re.search(r'If: ([\w./-]+)', line)
                 pkts_match = re.search(r'Pkts: (\d+)', line)
                 bytes_match = re.search(r'Bytes: (\d+)', line)
-                conn_tag_match = re.search(r'Conn Tag:\s*(\S+)', line)
+                conn_tag_match = re.search(r'Conn Tag:\s*([^,\s]+)', line)
                 
                 current_session['in_interface'] = if_match.group(1) if if_match else ''
                 current_session['in_pkts'] = pkts_match.group(1) if pkts_match else ''
@@ -410,10 +410,10 @@ def analyze_srx_sessions(input_file, output_file, write_csv=True):
                 current_session['out_dst_port'] = out_dst_port
                 
                 # Extract additional info from the rest of the line
-                if_match = re.search(r'If: ([\w.]+)', line)
+                if_match = re.search(r'If: ([\w./-]+)', line)
                 pkts_match = re.search(r'Pkts: (\d+)', line)
                 bytes_match = re.search(r'Bytes: (\d+)', line)
-                conn_tag_match = re.search(r'Conn Tag:\s*(\S+)', line)
+                conn_tag_match = re.search(r'Conn Tag:\s*([^,\s]+)', line)
                 
                 current_session['out_interface'] = if_match.group(1) if if_match else ''
                 current_session['out_pkts'] = pkts_match.group(1) if pkts_match else ''
