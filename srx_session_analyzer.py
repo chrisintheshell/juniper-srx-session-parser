@@ -311,21 +311,22 @@ def analyze_srx_sessions(input_file, output_file, write_csv=True):
         # Handles multiple formats:
         # Format 1: Session ID: 967, Policy name: self-traffic-policy/1, Timeout: 60, Session State: Valid
         # Format 2: Session ID: 68719476900, Policy name: default-permit/134, State: Active, Timeout: 10, Valid
-        session_match = re.match(r'Session ID: (\d+),\s+Policy name: (.+?)/(\d+),\s+(?:Timeout: (\d+),\s+Session State: (\w+)|State: (\w+),\s+Timeout: (\d+))', line)
+        # Format 3: Session ID: 602, Policy name: N/A, Timeout: N/A, Session State: Valid (self-traffic, one-way)
+        session_match = re.match(r'Session ID: (\d+),\s+Policy name: ([^,]+?)(?:/(\d+))?,\s+(?:Timeout: (\d+|N/A),\s+Session State: (\w+)|State: (\w+),\s+Timeout: (\d+|N/A))', line)
         if session_match:
             # Save previous session if it exists
             if current_session:
                 sessions.append(current_session)
             
             # Extract groups: handle both format variations
-            # Format 1 groups: (id, policy_name, policy_id, timeout, state, None, None)
-            # Format 2 groups: (id, policy_name, policy_id, None, None, state, timeout)
+            # Format 1/3 groups: (id, policy_name, policy_id or None, timeout, state, None, None)
+            # Format 2 groups: (id, policy_name, policy_id or None, None, None, state, timeout)
             session_id = session_match.group(1)
             policy_name = session_match.group(2)
-            policy_id = session_match.group(3)
+            policy_id = session_match.group(3) or ''  # May be None for N/A policies
             
-            # Groups 4,5 are from Format 1; groups 6,7 are from Format 2
-            if session_match.group(4) is not None:  # Format 1
+            # Groups 4,5 are from Format 1/3; groups 6,7 are from Format 2
+            if session_match.group(4) is not None:  # Format 1 or 3
                 timeout = session_match.group(4)
                 state = session_match.group(5)
             else:  # Format 2
@@ -679,10 +680,11 @@ def analyze_srx_sessions_extensive(input_file, output_file, write_csv=True):
             continue
         
         # Match Policy name line
-        policy_match = re.match(r'Policy name: (.+?)/(\d+)', line)
+        # Handles: "Policy name: default-permit/5" or "Policy name: N/A" (self-traffic)
+        policy_match = re.match(r'Policy name: ([^,/]+?)(?:/(\d+))?$', line)
         if policy_match and current_session:
             current_session['policy_name'] = policy_match.group(1)
-            current_session['policy_id'] = policy_match.group(2)
+            current_session['policy_id'] = policy_match.group(2) or ''
             continue
         
         # Match Source NAT pool and Application line
