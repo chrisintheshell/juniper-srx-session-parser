@@ -293,10 +293,6 @@ juniper-srx-session-analyzer/
     └── iana_services.pkl
 ```
 
-## License
-
-[Add your license here]
-
 ## Contributing
 
 [Add contribution guidelines here]
