@@ -876,7 +876,7 @@ if __name__ == "__main__":
     # Load service definitions from PKL files
     load_services()
     
-    parser = argparse.ArgumentParser(description='Parse Juniper SRX session tables')
+    parser = argparse.ArgumentParser(description='Parse and analyze Juniper SRX session table files')
     parser.add_argument('input_file', help='SRX session output file')
     parser.add_argument('output_file', nargs='?', help='Output CSV file (optional)')
     parser.add_argument('-E', '--extensive', action='store_true',
